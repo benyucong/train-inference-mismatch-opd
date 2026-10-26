@@ -58,6 +58,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 R = os.environ.get("CLUSTER_ROOT", "/path/to/workdir")
 TRAIN_DATA = f"{R}/workspace/datasets/dapo-math-17k.parquet"
 TRAIN_DATA_SHA256 = "039f3afd689c846985bd2bf58e55a2210a8b08a1a9e1f60dbc07107a5f341925"
+TRAIN_DATA_CONTENT_SHA256 = "157ddfe34217616feea45b59c90ec271fc346a2e0073cc4c26a3e0b8f1ad132b"  # parquet_content_sha256
 EVAL_DATA = f"{R}/workspace/datasets/test_data"
 N_POOL = 17917
 NC = 2000                                  # candidates: the last NC order positions
@@ -73,6 +74,17 @@ FORMAT = "ho_select/v1"
 
 def log(*a):
     print(f"[ho_select {time.strftime('%H:%M:%S')}]", *a, flush=True)
+
+
+def parquet_content_sha256(path):
+    """sha256 over the rows of a parquet file (each row as sorted-key JSON, one per line): equal for files with the same
+    rows in the same order, whatever library version wrote them, unlike the file's own sha256."""
+    import pyarrow.parquet as pq
+    h = hashlib.sha256()
+    for row in pq.read_table(path).to_pylist():
+        h.update(json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
 
 
 def sha256_file(path):
@@ -422,8 +434,10 @@ def training_order(n_pool, seed=1, skip=1):
 def load_dapo(path, allow_other=False):
     import pandas as pd
     sha = sha256_file(path)
-    if sha != TRAIN_DATA_SHA256 and not allow_other:
-        raise SystemExit(f"REFUSE: {path} sha256 {sha} is not the DAPO parquet ({TRAIN_DATA_SHA256})")
+    if sha != TRAIN_DATA_SHA256 and parquet_content_sha256(path) == TRAIN_DATA_CONTENT_SHA256:
+        print(f"[ho] {path}: the DAPO parquet's rows, written by another library version (file sha256 {sha})", flush=True)
+    elif sha != TRAIN_DATA_SHA256 and not allow_other:
+        raise SystemExit(f"REFUSE: {path} sha256 {sha} is not the DAPO parquet ({TRAIN_DATA_SHA256}) and its rows differ")
     df = pd.read_parquet(path)
     contents = []
     for p in df["prompt"]:

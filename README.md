@@ -65,24 +65,35 @@ Hugging Face cache at `$CLUSTER_ROOT/hf` (`scripts/cluster_env.sh` sets `HF_HOME
 evaluation scripts read these revisions' snapshot directories; the launcher and the evaluation jobs' teacher lookup
 take the first snapshot of each model, so keep only these revisions in the cache.
 
-The paper's runs on this pair add `SPEC=eagle3`, which decodes the student's rollouts speculatively with an EAGLE-3
-drafter, three draft tokens per step; every drafted token is verified against the student. For it, download
-`thoughtworks/DeepSeek-R1-Distill-Qwen-7B-Eagle3` and add `"max_position_embeddings": 131072` to its `config.json`
-(the published config omits the key, which then defaults to 2048, and vLLM sizes the drafter's position cache from
-it). Put the result at `$CLUSTER_ROOT/models/r1-7b-eagle3-maxpos131072`, or set `DRAFTER=<dir>`. Without `SPEC`,
-rollouts are decoded without a drafter.
+Most of the paper's training runs on this pair also decode rollouts with an EAGLE-3 draft head (`SPEC=eagle3`). For it,
+download `thoughtworks/DeepSeek-R1-Distill-Qwen-7B-Eagle3`, add `"max_position_embeddings": 131072` to its
+`config.json`, and put it at `$CLUSTER_ROOT/models/r1-7b-eagle3-maxpos131072` (or set `DRAFTER=<dir>`).
 
 ### Data
 
 `$CLUSTER_ROOT/workspace/datasets` holds, in verl's RL parquet format (a chat `prompt`, `reward_model.ground_truth`,
 `data_source`):
 
-- `dapo-math-17k.parquet`: the 17,917 distinct problems of DAPO-Math-17k. `bench/ho_select.py`, `bench/mo_calset.py`
-  and `bench/rl_data.py` check its sha256 (`039f3afd...`), because the training order and every derived set index its
-  rows; `ho_select.py` and `rl_data.py` accept another file with `--allow-other-data`.
-- `test_data/<BENCH>/test.parquet` for AIME24 (30 problems), AIME25 (30), AMC23 (the 83-problem AMC12 2022 and 2023
-  set) and MATH-500. `refresh/t3_acc2_freeze.json` records the sha256 and size of AIME24, AIME25 and AMC23;
-  `bench/tim_eval2.sbatch` checks them and runs without the check when given `FREEZE=`.
+- `dapo-math-17k.parquet`: [DAPO-Math-17k](https://huggingface.co/datasets/BytedTsinghua-SIA/DAPO-Math-17k)
+  (revision `65877096c24ffa7abc4e4fa5edb95cf3413a5674`), whose 1,791,700 rows repeat each problem 100 times, reduced
+  to the first row of each problem ID (17,917 rows):
+
+  ```python
+  import pandas as pd
+  df = pd.read_parquet("data/dapo-math-17k.parquet")   # the Hugging Face file
+  df = df[~df["extra_info"].map(lambda e: e["index"]).duplicated()].reset_index(drop=True)
+  df.to_parquet("dapo-math-17k.parquet", index=False)
+  ```
+
+  `bench/ho_select.py`, `bench/mo_calset.py` and `bench/rl_data.py` check that the file holds exactly these rows in
+  this order (by its sha256, or by a hash of its rows when another pandas or pyarrow version wrote it), because the
+  training order and every derived set index its rows; `ho_select.py` and `rl_data.py` accept another file with
+  `--allow-other-data`.
+- `test_data/<BENCH>/test.parquet` for AIME24 (30 problems, from
+  [NuminaMath](https://github.com/project-numina/aimo-progress-prize/blob/main/report/numina_dataset.pdf)), AIME25
+  (30), AMC23 (the 83-problem AMC12 2022 and 2023 set) and MATH-500. `refresh/t3_acc2_freeze.json` records the sha256
+  and size of AIME24, AIME25 and AMC23; `bench/tim_eval2.sbatch` checks them and runs without the check when given
+  `FREEZE=`.
 
 Held-out KL uses AIME24 and MATH-500 in full (530 problems); accuracy uses AIME24, AIME25 and AMC23. The rest is
 derived from these files:

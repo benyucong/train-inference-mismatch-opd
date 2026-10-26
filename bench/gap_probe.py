@@ -58,6 +58,7 @@ TEACHER = f"{R}/hf/hub/models--Skywork--Skywork-OR1-Math-7B/snapshots/fcef970f1d
 CKPT_STEPS = {"base": 0, "s200": 200, "s50": 50, "s100": 100}
 HO_DAPO = f"{R}/ho/ho_dapo.parquet"                                                     # bench/ho_select.py write
 HO_DAPO_SHA256 = "504c0e1647f226edd5e42441701195737d126b3a029b320b3d8ff9565101b555"     # the held-out DAPO prompts
+HO_DAPO_CONTENT_SHA256 = "5480642ba638c2019c88ec760435bcf1f3572a2be81c5f59614974db8084e53d"  # parquet_content_sha256
 HO_TOKIDS_SHA256 = "980a54307d577f6ac5ddcba092c784bf5ba45ead173407ffd63b3ddf87686edc"   # all 1,000 prompts, base template
 N_HO = 1000
 NOISE_SEED = 20261001
@@ -88,6 +89,17 @@ def log(*a):
 
 
 # ------------------------------------------------------------------------------------------------------------- files
+def parquet_content_sha256(path):
+    """sha256 over the rows of a parquet file (each row as sorted-key JSON, one per line): equal for files with the same
+    rows in the same order, whatever library version wrote them, unlike the file's own sha256."""
+    import pyarrow.parquet as pq
+    h = hashlib.sha256()
+    for row in pq.read_table(path).to_pylist():
+        h.update(json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 def sha256_file(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -194,8 +206,8 @@ def render_prompt_ids(tok, chats):
 def load_ho_chats(path=HO_DAPO, sha256=HO_DAPO_SHA256):
     import pandas as pd
     got = sha256_file(path)
-    if got != sha256:
-        raise SystemExit(f"[gap] REFUSE: {path} sha256 {got} != the held-out prompts' {sha256}")
+    if got != sha256 and not (sha256 == HO_DAPO_SHA256 and parquet_content_sha256(path) == HO_DAPO_CONTENT_SHA256):
+        raise SystemExit(f"[gap] REFUSE: {path} sha256 {got} != the held-out prompts' {sha256} and its rows differ")
     df = pd.read_parquet(path)
 
     def plain(x):

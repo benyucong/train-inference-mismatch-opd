@@ -95,6 +95,7 @@ R = os.environ.get("CLUSTER_ROOT", "/path/to/workdir")
 DATASETS = f"{R}/workspace/datasets"
 DAPO = f"{DATASETS}/dapo-math-17k.parquet"
 DAPO_SHA256 = "039f3afd689c846985bd2bf58e55a2210a8b08a1a9e1f60dbc07107a5f341925"
+DAPO_CONTENT_SHA256 = "157ddfe34217616feea45b59c90ec271fc346a2e0073cc4c26a3e0b8f1ad132b"  # parquet_content_sha256
 JR_DATA = f"{DATASETS}/dapo-math-17k-jr.parquet"
 SUBSET = f"{DATASETS}/dapo-math-17k-jr.subset.parquet"
 WORK = f"{R}/rl_data"
@@ -140,6 +141,27 @@ T0 = time.time()
 
 def log(*a):
     print(f"[rl_data {time.strftime('%H:%M:%S')} +{time.time() - T0:6.0f}s]", *a, flush=True)
+
+
+def parquet_content_sha256(path):
+    """sha256 over the rows of a parquet file (each row as sorted-key JSON, one per line): equal for files with the same
+    rows in the same order, whatever library version wrote them, unlike the file's own sha256."""
+    import pyarrow.parquet as pq
+    h = hashlib.sha256()
+    for row in pq.read_table(path).to_pylist():
+        h.update(json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
+def is_dapo(path, sha):
+    """The DAPO parquet: its file sha256, or the same rows written by another library version."""
+    if sha == DAPO_SHA256:
+        return True
+    if parquet_content_sha256(path) == DAPO_CONTENT_SHA256:
+        log(f"{path}: the DAPO parquet's rows, written by another library version (file sha256 {sha})")
+        return True
+    return False
 
 
 def sha256_file(path):
@@ -338,7 +360,7 @@ def cmd_jr(a):
     if os.path.exists(a.out):
         raise SystemExit(f"REFUSE: {a.out} exists")
     sha = sha256_file(a.dapo)
-    if sha != DAPO_SHA256 and not a.allow_other_data:
+    if not is_dapo(a.dapo, sha) and not a.allow_other_data:
         raise SystemExit(f"REFUSE: {a.dapo} sha256 {sha} is not the DAPO parquet ({DAPO_SHA256}); "
                          "--allow-other-data to build from it anyway")
     import pyarrow.parquet as pq
@@ -405,7 +427,7 @@ def checked_order(n_pool):
 def cmd_order(a):
     import pyarrow.parquet as pq
     sha = sha256_file(a.data)
-    if sha != DAPO_SHA256 and not a.allow_other_data:
+    if not is_dapo(a.data, sha) and not a.allow_other_data:
         raise SystemExit(f"REFUSE: {a.data} sha256 {sha} is not the DAPO parquet ({DAPO_SHA256})")
     n = pq.read_metadata(a.data).num_rows
     order, td_eq = checked_order(n)
@@ -483,7 +505,7 @@ def prepare(a, lo, hi):
     import pandas as pd
     from transformers import AutoTokenizer
     osha = sha256_file(a.order_data)
-    if osha != DAPO_SHA256 and not a.allow_other_data:
+    if not is_dapo(a.order_data, osha) and not a.allow_other_data:
         raise SystemExit(f"REFUSE: --order-data {a.order_data} sha256 {osha} is not the DAPO parquet ({DAPO_SHA256})")
     dsha = sha256_file(a.data)
     dapo = pd.read_parquet(a.order_data)

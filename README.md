@@ -138,10 +138,28 @@ SC=1 SAMPLER_NOISE=0.15 STEPS=200 sbatch scripts/cluster_opd_sync.sh
 ```
 
 Add `SPEC=eagle3` to match the paper's runs, and `SAVE_FREQ=<n>` to keep checkpoints for evaluation (the default
-saves none). `SAMPLER_MODELOPT=fp8|fp8fl` reads `$CLUSTER_ROOT/mo/scales/<recipe>.json` and
+saves none). The paper's runs without weight noise also set `SAMPLER_NOISE=0`, which adds nothing and logs the
+engine's projection on the noise direction. `SAMPLER_MODELOPT=fp8|fp8fl` reads `$CLUSTER_ROOT/mo/scales/<recipe>.json` and
 `SAMPLER_QUANT=...nvfp4...` reads `$CLUSTER_ROOT/mo/nvfp4emu/nvfp4_static.json`; the offline-estimate section below
 makes both, and `SAMPLER_MODELOPT_SCALES` / `SAMPLER_QUANT_STATIC` point elsewhere. The comments in
 `scripts/cluster_opd_sync.sh` document every knob.
+
+### Rollout Speed
+
+`bench/speed_read.py` computes updates per hour from training logs. It reads steps 3 to N (an asynchronous run from
+its step-2 to its step-N time stamps, which leaves out the pipeline fill and the end-of-run drain) and gives each
+run's ratio to the first log; the paper's 200-step runs are read with `--last 200`. The comparison at the training
+batch without the draft head runs 30 steps of each configuration:
+
+```bash
+STEPS=30 SAMPLER_NOISE=0 SPEC=none sbatch scripts/cluster_opd_sync.sh
+KV_DTYPE=fp8 KV_SKIP_LAYERS=0 STEPS=30 SAMPLER_NOISE=0 SPEC=none sbatch scripts/cluster_opd_sync.sh
+SAMPLER_MODELOPT=fp8fl STEPS=30 SAMPLER_NOISE=0 SPEC=none sbatch scripts/cluster_opd_sync.sh
+ASYNC_MODE=fully_async ASYNC_STALENESS=4 STEPS=30 SAMPLER_NOISE=0 SPEC=none sbatch scripts/cluster_opd_sync.sh
+
+# BF16 first: each run's updates per hour over steps 3-30 and its ratio to BF16
+python3 bench/speed_read.py <bf16>.log <fp8 cache>.log <fp8fl>.log <async>.log --last 30
+```
 
 ### RL Comparison
 

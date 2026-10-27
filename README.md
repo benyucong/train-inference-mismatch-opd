@@ -100,9 +100,11 @@ vLLM builds the head's position table for only 2,048 positions), and put it at
   `--allow-other-data`.
 - `test_data/<BENCH>/test.parquet` for AIME24 (30 problems, from
   [NuminaMath](https://github.com/project-numina/aimo-progress-prize/blob/main/report/numina_dataset.pdf)), AIME25
-  (30), AMC23 (the 83-problem AMC12 2022 and 2023 set) and MATH-500. `refresh/t3_acc2_freeze.json` records the sha256
-  and size of AIME24, AIME25 and AMC23; `bench/tim_eval2.sbatch` checks them and runs without the check when given
-  `FREEZE=`.
+  (30), AMC23 (the 83-problem AMC12 2022 and 2023 set) and MATH-500 (500), all downloaded from Hugging Face in
+  verl's RL parquet format, each prompt ending with " Please reason step by step, and put your final answer within
+  \boxed{}.". `refresh/t3_acc2_freeze.json` records the sha256 and size of AIME24, AIME25 and AMC23, and
+  `bench/tim_eval2.sbatch` checks them (it runs without the check when given `FREEZE=`). MATH-500's file has sha256
+  `2e4c43a3d52175a773816f99f327d3ed5e3d15af6f479d87196a702cdb4f5411` (77,936 bytes).
 
 Held-out KL uses AIME24 and MATH-500 in full (530 problems); accuracy uses AIME24, AIME25 and AMC23. The rest is
 derived from these files:

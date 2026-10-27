@@ -14,7 +14,7 @@
 #      fixed per (problem, sample) -> identical across arms;
 #   2. bench/tim_kl_eval.py: those same traces teacher-forced through the checkpoint and through the teacher ->
 #      per-sample k1 = KL(p_theta || p_T) on the checkpoint's OWN samples (independent of the rollout engine).
-#   env: TRAIN_JOB (training job id; the checkpoint is found by it, whatever the arm label), STEP (50|100),
+#   env: TRAIN_JOB (training job id; the checkpoint is found by it, whatever the arm label), STEP (the checkpoint's step, e.g. 25 to 200),
 #        ARM (name for the out dir), or CKPT (an explicit hf dir, e.g. the base student for step 0) + ARM.
 #        Optional: RUNS_ROOT, the directory holding the repository checkouts the training jobs ran from (default: the
 #        parent directory of this checkout, so checkpoints this checkout wrote are found), D (the out dir).

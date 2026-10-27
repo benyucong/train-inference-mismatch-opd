@@ -21,7 +21,7 @@ tools/probe0/    the exact gradient probe
 logs/slurm/      where every job writes its Slurm log
 ```
 
-Our changes to verl are mostly in `verl/verl/utils/specopd_*.py`:
+`verl/` is upstream verl at commit `fbb4b3a8` with our changes, most of them in `verl/verl/utils/specopd_*.py`:
 
 | File | What it adds |
 |---|---|
@@ -29,7 +29,8 @@ Our changes to verl are mostly in `verl/verl/utils/specopd_*.py`:
 | `specopd_modelopt.py` | NVIDIA Model Optimizer recipes on vLLM's real kernels (FP8, and FP8 with the first and last layers in BF16) |
 | `specopd_quant.py`, `specopd_nvfp4.py`, `specopd_smooth.py` | emulated formats (NVFP4, INT8 SmoothQuant, INT4 AWQ): each tensor rounded to the format's grid with Model Optimizer's scales, then computed in BF16 |
 | `specopd_kvskip.py`, `specopd_kvaudit.py` | keeping chosen layers' KV cache in BF16, and an audit of what each engine's cache stores |
-| `specopd_stale.py` | rollouts from stale weights, emulated inside the synchronous trainer |
+| `specopd_stale.py` | rollouts from stale weights, emulated inside the synchronous trainer (not used by the paper's runs, which use verl's asynchronous modes, `ASYNC_MODE=fully_async` and `ASYNC_MODE=colocate`) |
+| `../checkpoint_engine/specopd_pynccl_checkpoint_engine.py` | the weight sync of fully asynchronous runs |
 
 Score centering for OPD, GRPO and REINFORCE is in `verl/verl/trainer/ppo/score_centering.py`; truncated importance
 sampling uses verl's rollout correction.
@@ -38,8 +39,12 @@ sampling uses verl's rollout correction.
 
 ### Environment Setup
 
-We used vLLM 0.19.1 and PyTorch 2.10 on GH200 (aarch64) nodes with Slurm, four GPUs per node, plus NVIDIA Model
-Optimizer 0.47 and llm-compressor 0.11 for the quantized exports. `scripts/cluster_env.sh` loads the Python stack and
+We used verl at upstream commit `fbb4b3a8` (vendored in `verl/`), vLLM 0.19.1 and PyTorch 2.10 on GH200 (aarch64)
+nodes with Slurm, four GPUs per node (GPU driver 595.91.07 with CUDA 13.2), plus NVIDIA Model Optimizer 0.47 and
+llm-compressor 0.11 for the quantized exports. An OPD run takes two nodes: one runs the trainer and four rollout
+replicas, one per GPU, and the other serves the teacher. A fully asynchronous run gives two of the first node's GPUs to
+the trainer and two to rollout replicas (`ASYNC_ROLLOUT_GPUS=2`, the default). GRPO and REINFORCE take one node (no
+teacher), and the offline jobs one GPU. `scripts/cluster_env.sh` loads the Python stack and
 sets the paths; edit its module lines and `CLUSTER_ROOT` for your site, and the `#SBATCH` lines of the job scripts
 (`YOUR_ACCOUNT`, `PARTITION_*`). Python scripts read the same root from the `CLUSTER_ROOT` environment variable. Run
 the commands below from the repository root after `source scripts/cluster_env.sh`.
@@ -65,9 +70,13 @@ Hugging Face cache at `$CLUSTER_ROOT/hf` (`scripts/cluster_env.sh` sets `HF_HOME
 evaluation scripts read these revisions' snapshot directories; the launcher and the evaluation jobs' teacher lookup
 take the first snapshot of each model, so keep only these revisions in the cache.
 
-Most of the paper's training runs on this pair also decode rollouts with an EAGLE-3 draft head (`SPEC=eagle3`). For it,
-download `thoughtworks/DeepSeek-R1-Distill-Qwen-7B-Eagle3`, add `"max_position_embeddings": 131072` to its
-`config.json`, and put it at `$CLUSTER_ROOT/models/r1-7b-eagle3-maxpos131072` (or set `DRAFTER=<dir>`).
+On this pair, the paper's OPD, GRPO and REINFORCE training runs decode rollouts with an EAGLE-3 draft head that
+proposes 3 tokens (`SPEC=eagle3`; `SPEC_K` defaults to 3), except the memory tests at 1,024 and 1,536 sequences per
+step and the 30-step runs of Rollout Speed, which set `SPEC=none`. The offline estimates, the evaluations and the two
+smaller pairs' runs use no draft head. For it, download `thoughtworks/DeepSeek-R1-Distill-Qwen-7B-Eagle3` (revision
+`10c244711d720e375401f490326133f135c411fa`), add `"max_position_embeddings": 131072` to its `config.json` (without it
+vLLM builds the head's position table for only 2,048 positions), and put it at
+`$CLUSTER_ROOT/models/r1-7b-eagle3-maxpos131072` (or set `DRAFTER=<dir>`).
 
 ### Data
 
@@ -101,9 +110,11 @@ derived from these files:
 - `bench/ho_select.py` selects the RL comparison's held-out problems: `order`, `neardup`, `select`, `check`, then
   `write --ho-dir $CLUSTER_ROOT/ho` (its docstring gives the rule); `bench/ho_eval.py freeze` then writes the
   `ho_freeze.json` that `bench/ho_eval.sbatch` reads.
-- `bench/mo_calset.py` builds the offline estimate's calibration set: 256 training problems drawn outside the held-out
-  pool listed in `bench/mo_calset_excl.json`, two responses each (`bench/mo_formats.sbatch` with `CALSET_MODE=build`
-  runs it).
+- `bench/mo_calset.py` builds the calibration set from which the quantized exports take their scales: two responses
+  of the untrained student to each of 256 training problems drawn outside the held-out pool listed in
+  `bench/mo_calset_excl.json` (`bench/mo_formats.sbatch` with `CALSET_MODE=build` runs it). The offline estimate
+  itself samples other prompts: two responses to each of AIME24 problems 0-7 and MATH-500 problems 0-7
+  (`bench/mo_measure.py`).
 - `bench/rl_data.py` builds the RL comparison's training subset (see below).
 - `refresh/t3_acc2_freeze.json` lists the AMC23 problems excluded for overlap with DAPO-Math-17k, with a note for every
   problem the overlap check flagged.
@@ -133,23 +144,63 @@ SAMPLER_QUANT=w=nvfp4,a=nvfp4 KV_DTYPE=fp8 STEPS=200 sbatch scripts/cluster_opd_
 # order; one answer can span two versions)
 ASYNC_MODE=fully_async ASYNC_STALENESS=4 STEPS=200 sbatch scripts/cluster_opd_sync.sh
 
-# per-token corrections: score centering (SC=1) or truncated importance sampling (RC_IS=token)
+# stale weights and Model Optimizer FP8 together
+ASYNC_MODE=fully_async ASYNC_STALENESS=8 SAMPLER_MODELOPT=fp8fl STEPS=200 sbatch scripts/cluster_opd_sync.sh
+
+# verl's colocated asynchronous mode
+ASYNC_MODE=colocate STEPS=200 sbatch scripts/cluster_opd_sync.sh
+
+# per-token corrections: score centering (SC=1) or truncated importance sampling (RC_IS=token); SC=probe computes
+# the centering term and adds it to no loss (the control)
 SC=1 SAMPLER_NOISE=0.15 STEPS=200 sbatch scripts/cluster_opd_sync.sh
+
+# a constant offset c added to every token's advantage
+ADV_OFFSET=0.15 SAMPLER_NOISE=0.15 STEPS=200 sbatch scripts/cluster_opd_sync.sh
+
+# a second run of a configuration changes only the rollout sampling seed (default 42; replica r uses 42 + r)
+ROLLOUT_SEED=43 SAMPLER_NOISE=0.15 STEPS=200 sbatch scripts/cluster_opd_sync.sh
 ```
 
-Add `SPEC=eagle3` to match the paper's runs, and `SAVE_FREQ=<n>` to keep checkpoints for evaluation (the default
-saves none). The paper's runs without weight noise also set `SAMPLER_NOISE=0`, which adds nothing and logs the
-engine's projection on the noise direction. `SAMPLER_MODELOPT=fp8|fp8fl` reads `$CLUSTER_ROOT/mo/scales/<recipe>.json` and
+To match the paper's 200-step runs on this pair, add `SPEC=eagle3 SAVE_FREQ=100`: they keep checkpoints at steps 100
+and 200 for evaluation (the default saves none), and the time spent saving counts toward each run's measured speed;
+the time-to-quality runs save every 25 steps. Always pass `STEPS`: the launcher's default is 20. The paper's runs
+without weight noise also set `SAMPLER_NOISE=0`, which adds nothing, logs the engine's projection on the noise
+direction and prints the line the time-to-quality clock starts from. Everything else is a launcher default: 8
+problems with 8 responses each per step, temperature 1, at most 16,384 response tokens, a constant learning rate of
+1e-6, data seed 1 (`SEED`) and noise seed 20261001 (`SAMPLER_NOISE_SEED`). `SAMPLER_MODELOPT=fp8|fp8fl` reads `$CLUSTER_ROOT/mo/scales/<recipe>.json` and
 `SAMPLER_QUANT=...nvfp4...` reads `$CLUSTER_ROOT/mo/nvfp4emu/nvfp4_static.json`; the offline-estimate section below
 makes both, and `SAMPLER_MODELOPT_SCALES` / `SAMPLER_QUANT_STATIC` point elsewhere. The comments in
 `scripts/cluster_opd_sync.sh` document every knob.
+
+### Reading a Training Log
+
+Every step prints one line of verl's metrics (`step:<n> - key:value - ...`). The paper's per-run quantities come from
+these fields:
+
+| Quantity | Field |
+|---|---|
+| mismatch at a step | `rollout_corr/kl`; a run's mismatch is its mean over steps 1-200 (the admission check and Table 8 use steps 1-100) |
+| training accuracy | `critic/score/mean`, the share of rollouts whose final answer is correct (OPD logs it but does not train on it) |
+| the trainer's wait for rollouts | `timing_s/gen` (generation and teacher scoring in a synchronous run) |
+| realized staleness of an asynchronous run | `training/off_policy/trajectory_staleness_worst/max` |
+| cache use and preemptions (with `KV_METRICS=1`) | `kvmem/usage_max` and `kvmem/preemptions`; the capacity is `cap_tokens` on the `[SPECOPD-KV-CFG]` lines |
 
 ### Rollout Speed
 
 `bench/speed_read.py` computes updates per hour from training logs. It reads steps 3 to N (an asynchronous run from
 its step-2 to its step-N time stamps, which leaves out the pipeline fill and the end-of-run drain) and gives each
-run's ratio to the first log; the paper's 200-step runs are read with `--last 200`. The comparison at the training
-batch without the draft head runs 30 steps of each configuration:
+run's ratio to the first log.
+
+Figure 4 (Table 8) reads 200-step runs of the Training section, all with `SPEC=eagle3 SAMPLER_NOISE=0 SAVE_FREQ=100`:
+the synchronous BF16 run, fully asynchronous runs with weights up to 1, 2, 4 and 8 versions old, and Model Optimizer
+FP8 (first and last layers in BF16) at 4 and 8 versions old. The 4-version FP8 run is the time-to-quality run below
+(`SAVE_FREQ=25`). Synchronous run first:
+
+```bash
+python3 bench/speed_read.py <sync>.log <k1>.log <k2>.log <k4>.log <k8>.log <k4 fp8fl>.log <k8 fp8fl>.log --last 200
+```
+
+The comparison at the training batch without the draft head (Table 10) runs 30 steps of each configuration:
 
 ```bash
 STEPS=30 SAMPLER_NOISE=0 SPEC=none sbatch scripts/cluster_opd_sync.sh
@@ -160,6 +211,50 @@ ASYNC_MODE=fully_async ASYNC_STALENESS=4 STEPS=30 SAMPLER_NOISE=0 SPEC=none sbat
 # BF16 first: each run's updates per hour over steps 3-30 and its ratio to BF16
 python3 bench/speed_read.py <bf16>.log <fp8 cache>.log <fp8fl>.log <async>.log --last 30
 ```
+
+The memory tests (Figure 5, Table 9) run 8 steps without the draft head at 1,536 sequences per step
+(`BATCH=192 ROLLOUT_MAX_SEQS=384`) and at 1,024 (`BATCH=128`, which also runs `SAMPLER_MODELOPT=fp8`), one run per
+engine, with `KV_METRICS=1`:
+
+```bash
+M="BATCH=192 ROLLOUT_MAX_SEQS=384 STEPS=8 SAMPLER_NOISE=0 SPEC=none KV_METRICS=1"
+env $M sbatch scripts/cluster_opd_sync.sh
+env $M KV_DTYPE=fp8 KV_SKIP_LAYERS=0 sbatch scripts/cluster_opd_sync.sh
+env $M SAMPLER_MODELOPT=fp8fl sbatch scripts/cluster_opd_sync.sh
+python3 bench/speed_read.py <bf16>.log <fp8 cache>.log <fp8fl>.log --last 8
+```
+
+Peak cache use is the largest `kvmem/usage_max` over steps 3-8, and preemptions are the sum of `kvmem/preemptions`
+over steps 3-8; `bench/speed_read.py` does not read them.
+
+### Time to Quality
+
+Three 200-step runs save a checkpoint every 25 steps:
+
+```bash
+SAMPLER_NOISE=0 SPEC=eagle3 SAVE_FREQ=25 STEPS=200 sbatch scripts/cluster_opd_sync.sh
+for K in 8 4; do
+    ASYNC_MODE=fully_async ASYNC_STALENESS=$K SAMPLER_MODELOPT=fp8fl SAMPLER_NOISE=0 SPEC=eagle3 SAVE_FREQ=25 \
+        STEPS=200 sbatch scripts/cluster_opd_sync.sh
+done
+```
+
+Evaluate every checkpoint of each run, and the untrained student once, with `bench/tim_eval.sbatch` (Validation):
+`ARM=<run name> TRAIN_JOB=<job id> STEP=<step>`, and `ARM=base CKPT=<the student's snapshot directory>` for step 0.
+Each job writes `$CLUSTER_ROOT/eval/<ARM>_s<STEP>/kl_summary.json`, whose `ALL.kl_problem_mean` is the held-out KL.
+
+The clock is wall-clock time between two time-stamped lines of the training log; no script here reads it:
+
+```bash
+grep '\[SPECOPD-TIM\] step=0 ' logs/slurm/<run>.log              # start: the earliest of these lines
+grep 'Saving checkpoint to .*/global_step_' logs/slurm/<run>.log   # t(N): the line ending in global_step_N
+```
+
+The start is the rollout engine's first weight load; `t(N)` includes the earlier checkpoints' saves and leaves out
+checkpoint N's own save and the start-up before training. Both targets come from the synchronous run: its step-200
+held-out KL, and 90% of its improvement, KL(0) - 0.9 (KL(0) - KL(200)). A run reaches a target at its first
+checkpoint at or below it, and the speed-up is the synchronous run's time divided by the run's time to the same
+target.
 
 ### RL Comparison
 
@@ -262,7 +357,8 @@ Example: `SIGMAS=nhigh=0.15 A_TRACES=<a.jsonl> B_TRACES=<dir>/gen_T1_p1.jsonl sb
 `bench/tim_eval.sbatch` evaluates one checkpoint: `refresh/t3_acc.py` samples and grades answers on AIME24 (8 per
 problem) and MATH-500 (1 per problem), and `bench/tim_kl_eval.py` scores the same answers with the checkpoint and the
 teacher to give held-out KL. `bench/tim_eval2.sbatch` adds the accuracy composite (`refresh/t3_acc2.py`): avg@16,
-weighted by benchmark, over the problems `refresh/t3_acc2_freeze.json` keeps. The job first checks the benchmark files
+the mean of the three benchmarks' accuracies (each benchmark counts equally), over the problems
+`refresh/t3_acc2_freeze.json` keeps. The job first checks the benchmark files
 against that record and stops if they differ; `FREEZE=` runs without it, on the full benchmarks.
 `$PYTHON_BIN refresh/t3_acc2.py decontam --freeze refresh/t3_acc2_freeze.json --check` recomputes the overlap check and
 fails unless it reproduces the record's exclusions.
@@ -274,6 +370,14 @@ The evaluation jobs find a training job's checkpoint from `TRAIN_JOB` and `STEP`
 `$RUNS_ROOT/*/checkpoints/specopd/`, where `RUNS_ROOT` defaults to the parent directory of the checkout.
 `bench/tim_eval.sbatch` and `bench/tim_eval2.sbatch` also take `CKPT=<hf dir>`; `bench/ho_eval.sbatch` takes
 `CKPT=base` for the untrained student.
+
+## Not in This Repository
+
+The plan, the per-step training logs, the analyzers' outputs and the scripts that write the paper's numbers and draw
+its figures will be released after the review. Until then, no script here compares a run with its reference (the
+held-out KL rule with its problem-paired interval, and the accuracy rule), reads the time-to-quality clock or the
+memory tests' cache use, or computes the Qwen3-4B offline estimate. The launcher takes the smaller pairs' student and
+teacher (`STUDENT`, `TEACHER`), but `bench/tim_eval.sbatch` and `bench/tim_eval2.sbatch` are written for the 7B pair.
 
 ## Citation
 

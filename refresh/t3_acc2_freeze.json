@@ -1,0 +1,213 @@
+{
+ "schema": "t3_acc2_freeze/1",
+ "description": "Evaluation record for refresh/t3_acc2.py: the sha256 and problem count of each benchmark parquet, the decontamination of the benchmarks against the DAPO-Math-17k training parquet (method, thresholds, adjudication rule, excluded problems and the adjudication of every flagged problem), and the endpoint. data_dir and decontam.train_file are relative to $CLUSTER_ROOT; the files are checked by sha256, not by path.",
+ "data_dir": "workspace/datasets/test_data",
+ "benches": {
+  "AIME24": {
+   "n_problems": 30,
+   "sha256": "dc3ae15e0236828eb95033a68aab60e19da7ea1afdaad80e26924e5f82d3d96f"
+  },
+  "AIME25": {
+   "n_problems": 30,
+   "sha256": "14ee9a0e8d79cba76c62247bc5ebee1647e023eccf60e31994e279113777dad2"
+  },
+  "AMC23": {
+   "n_problems": 83,
+   "sha256": "0f933978194b73fc091bd667af7d9056d3d745c9d9e3577b5adcad77f8f1ae7c"
+  }
+ },
+ "decontam": {
+  "method": "decontam/1",
+  "train_file": "workspace/datasets/dapo-math-17k.parquet",
+  "train_sha256": "039f3afd689c846985bd2bf58e55a2210a8b08a1a9e1f60dbc07107a5f341925",
+  "train_rows": 17917,
+  "thresholds": {
+   "auto_word": 0.75,
+   "auto_sh3": 0.6,
+   "flag_word": 0.5,
+   "flag_sh3": 0.3
+  },
+  "adjudication_rule": "exclude if and only if one of the top candidate training rows (top 3 by W, top 3 by S3) asks the same question on the same data, up to the answer's format (k+m of a fraction, remainder mod 100, numerator only, ...); otherwise keep",
+  "exclude": {
+   "AIME24": [],
+   "AIME25": [],
+   "AMC23": [
+    0,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    12,
+    17,
+    18,
+    19,
+    21,
+    24,
+    25,
+    26,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    38,
+    39,
+    40,
+    41,
+    42,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    59,
+    60,
+    61,
+    63,
+    65,
+    66,
+    67,
+    68,
+    70,
+    71,
+    72,
+    75,
+    77,
+    79,
+    80,
+    81
+   ]
+  },
+  "adjudicated": {
+   "AIME24": {
+    "13": {
+     "decision": "keep",
+     "note": "rows 5911/8707/6141/5963 share only the m*sqrt(n)/p answer boilerplate; different problems (tetrahedron insphere vs triangles/circles)"
+    },
+    "21": {
+     "decision": "keep",
+     "note": "row 17623 is a different problem (5-digit n, quotient/remainder by 100); rows 5895/9153 ask a different N"
+    }
+   },
+   "AIME25": {
+    "3": {
+     "decision": "keep",
+     "note": "rows 2794/4516 count pairs in 1..9 whose product ends in 5; different problem"
+    },
+    "7": {
+     "decision": "keep",
+     "note": "row 626 (x-|x^2-4x+3|=k) and rows 3624/7671 are different problems"
+    },
+    "8": {
+     "decision": "keep",
+     "note": "rows 9103/495/6136/5893/8719/2595 share only the (a-sqrt b)/c answer boilerplate; different problems"
+    },
+    "11": {
+     "decision": "keep",
+     "note": "rows 5783/3708/7691/11074/6137 share only the a*sqrt(b) answer boilerplate; different problems"
+    },
+    "13": {
+     "decision": "keep",
+     "note": "rows 6224/9311 minimise f(X)=AX+BX+CX+DX for a tetrahedron; different figure, data and answer"
+    },
+    "16": {
+     "decision": "keep",
+     "note": "rows 189/4500/757/8761 are different 'sum of all n such that' problems"
+    },
+    "21": {
+     "decision": "keep",
+     "note": "rows 15652/1050/3744/6290/10460 are different divisor/probability problems"
+    }
+   },
+   "AMC23": {
+    "0": {
+     "decision": "exclude",
+     "note": "rows 15788/15789: same continued fraction 3+1/(3+1/(3+1/3)) asked as k+m; same answer 142"
+    },
+    "3": {
+     "decision": "exclude",
+     "note": "row 15805: same cos(angle CMD) in a regular tetrahedron asked as k+m; same answer 4"
+    },
+    "11": {
+     "decision": "keep",
+     "note": "row 10530 (sum 25, product 126) is a different problem"
+    },
+    "22": {
+     "decision": "keep",
+     "note": "row 15338 has the same expression but defines the operation as a-1/b, not |x-y| (answer 37 vs 2); rows 6936/10316 different"
+    },
+    "23": {
+     "decision": "keep",
+     "note": "row 9585 evaluates ((3+-i*sqrt3)/2)^8, row 6336 a different problem; not the same question"
+    },
+    "29": {
+     "decision": "keep",
+     "note": "rows 4061/6130/5888 share only the m*sqrt(p)/n boilerplate; different triangles"
+    },
+    "39": {
+     "decision": "exclude",
+     "note": "row 16837: same rotation of (-1,-2) by 270 deg ccw about (3,1), asked as a+b; same answer 5"
+    },
+    "44": {
+     "decision": "keep",
+     "note": "rows 6033/12023/12025/71 are different problems"
+    },
+    "45": {
+     "decision": "keep",
+     "note": "rows 15567/16990 ask the acute angle between MN and PA in triangle PAT; different problem (answer 80 vs 45)"
+    },
+    "61": {
+     "decision": "exclude",
+     "note": "rows 15846/16992: same running-total-equals-3 die problem; same answer 265"
+    },
+    "62": {
+     "decision": "keep",
+     "note": "rows 6094/14743/15748/16768 are different problems"
+    },
+    "67": {
+     "decision": "exclude",
+     "note": "rows 16512/15858: same maximal-area isosceles trapezoid (legs 1, one base twice the other); answer re-formatted (k+m vs m^2+n^2)"
+    },
+    "72": {
+     "decision": "exclude",
+     "note": "rows 16122/15880: same arithmetic-progression triangle with side 6 and a 120 deg angle; same answer 18"
+    },
+    "74": {
+     "decision": "keep",
+     "note": "rows 255/17706/6880/9705 are different dice problems"
+    },
+    "76": {
+     "decision": "keep",
+     "note": "rows 6094/6324/4979/5851/9575 are different problems"
+    },
+    "82": {
+     "decision": "keep",
+     "note": "rows 9766/6184/8629/2970/8508 are different area problems"
+    }
+   }
+  }
+ },
+ "endpoints": {
+  "k": 16,
+  "composite": {
+   "benches": [
+    "AIME24",
+    "AIME25",
+    "AMC23"
+   ],
+   "weighting": "benchmark",
+   "subset": "clean"
+  }
+ }
+}

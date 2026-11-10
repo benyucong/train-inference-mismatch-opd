@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# Slurm does not create --output directories: the directory ships empty, the job logs stay untracked.
+logs/slurm/*
+!logs/slurm/.gitkeep
